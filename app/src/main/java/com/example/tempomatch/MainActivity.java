@@ -16,13 +16,14 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.nostra13.universalimageloader.core.ImageLoader;
+import com.nostra13.universalimageloader.core.ImageLoaderConfiguration;
 import com.spotify.android.appremote.api.ConnectionParams;
 import com.spotify.android.appremote.api.Connector;
 import com.spotify.android.appremote.api.SpotifyAppRemote;
 import com.spotify.protocol.client.CallResult;
 import com.spotify.protocol.client.Subscription;
 import com.spotify.protocol.types.PlayerState;
-import com.spotify.protocol.types.Track;
 import com.spotify.sdk.android.authentication.AuthenticationClient;
 import com.spotify.sdk.android.authentication.AuthenticationRequest;
 import com.spotify.sdk.android.authentication.AuthenticationResponse;
@@ -32,9 +33,11 @@ import org.json.JSONArray;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import kaaes.spotify.webapi.android.SpotifyApi;
 import kaaes.spotify.webapi.android.SpotifyCallback;
@@ -44,7 +47,11 @@ import kaaes.spotify.webapi.android.models.AudioFeaturesTrack;
 import kaaes.spotify.webapi.android.models.AudioFeaturesTracks;
 import kaaes.spotify.webapi.android.models.Pager;
 import kaaes.spotify.webapi.android.models.Playlist;
+import kaaes.spotify.webapi.android.models.PlaylistSimple;
 import kaaes.spotify.webapi.android.models.PlaylistTrack;
+import kaaes.spotify.webapi.android.models.PlaylistsPager;
+import kaaes.spotify.webapi.android.models.SavedTrack;
+import kaaes.spotify.webapi.android.models.Track;
 import kaaes.spotify.webapi.android.models.UserPrivate;
 import retrofit.client.Response;
 
@@ -52,20 +59,25 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     //////////
 
-    private final boolean DEBUG = false;
+    private final boolean DEBUG = true; // controls whether we display the current MODEs
 
     /////////////////////
 
-    private List<String> spotifyPlaylists;
-    private List<String> spotifySongs;
+    private boolean USER_TRACKS;
+    private boolean USER_PLAYLISTS;
+    private boolean PREDEFINED;
+    private boolean CATEGORY_PLAYLISTS;
 
-    private Playlist currentSpotifyPlaylist;
+    private boolean GOT_USER_TRACKS;
+    private boolean GOT_PREDEFINED;
+    private boolean GOT_USER_PLAYLISTS;
+    private boolean GOT_CATEGORY;
 
-
-
+    private final int TYPE_CATEGORY = 1;
+    private final int TYPE_PREDEFINED = 2;
+    private final int TYPE_USER = 3;
 
     //MODE FIELDS////////////////////
-
 
     private int MODE;
     private boolean MUSIC;
@@ -76,12 +88,14 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private final int FIND_PACE = 4;
     private final int TIMING = 5;
 
+    // ImageViews for buttons
     private ImageView button_CENTER;
     private ImageView button_PREV;
     private ImageView button_NEXT;
     private ImageView button_SET;
     private ImageView button_FIND;
 
+    // Drawables for button images
     private Drawable playDraw;
     private Drawable pauseDraw;
     private Drawable prevDraw;
@@ -90,6 +104,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private Drawable findDraw;
     private Drawable stopWatch;
 
+    // TextViews for UI
     private TextView bpmView;
     private TextView paceView;
     private TextView titleView;
@@ -98,13 +113,10 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private TextView debugMusic;
     private TextView debugMode;
 
-
-
-
+    // ImageView for album art
+    private ImageView albumArt;
 
     ///////////////////////
-
-
 
     //SPOTIFY FIELDS
     public static String USER_NAME;
@@ -133,37 +145,77 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private float prevSteps;// initial steps for calculating user's pace
     private float currSteps;// current steps for a given sensor event
 
-    private final int TEMPO_TIME = 30000;
-    private final float MARGIN = 4;
+    private final int TEMPO_TIME = 30000; // how long we spend tracking users steps (in milliseconds)
+    private final float MARGIN = 4; // the +- margin for bpm when choosing songs
 
-    private float tempo;
+    private float tempo; // the target tempo - CURRENTLY UNUSED
 
-    private float bpm; // the pace the user sets.
+    private float bpm; // the pace the user sets (the number above the metronome)
     private float pace; // the current pace
 
     /////////////////////////////////
-    List<Playlist> playlists;
-    List<AudioFeaturesTrack> featuresTracks;
 
-    List<AudioFeaturesTrack> songQueue;
+    private List<String> predefinedSpotifyPlaylists; // The playlists to pull songs from (USER_ID:PlaylistID)
+    //private List<String> spotifySongs; // The songs to pull from (Track ID)
+    private Playlist currentSpotifyPlaylist; // the most recently created Spotify playlist
+
+    //private List<Playlist> playlists;   // the list of playlists to consider
+    private Set<AudioFeaturesTrack> featuresTracks; // ALL of the featuresTracks
+    private Map<String, Float> beatMap; // a Map of known track URIs to tempos
+
+    private int PLAYLIST_SIZE; // the maximum size of a created playlist
+
+    ///////////////////////////////////
+
+    private List<String> userSongIDs; // list for users track ids
+    //private List<String> userPlaylistSongIDs; // list for track ids from user's playlists.
+
+    private List<String> categorySongIDs;
+    private List<AudioFeaturesTrack> categoryFeaturesTracks;
+    private Map<String, Float> categoryBeatMap;
+
+    private List<AudioFeaturesTrack> predefinedFeaturesTracks;
+    private Map<String, Float> predefinedBeatMap;
+
+    private List<AudioFeaturesTrack> userSavedFeaturesTracks;
+    private Map<String, Float> userSavedBeatMap;
+
+    private List<AudioFeaturesTrack> userPlaylistFeaturesTracks;
+    private Map<String, Float> userPlaylistBeatMap;
+
+    ////////////////////////////////
+    // The ImageLoader for handling album art
+    private ImageLoader imageLoader;
 
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        //setContentView(R.layout.activity_main);
-        setContentView(R.layout.main_ui);
-        //setContentView(R.layout.splash);
-        // initialize views
-        count = (TextView) findViewById(R.id.countText);
-        ///stepView = findViewById(R.id.stepView);
-        //getTempoButton = findViewById(R.id.getSteps);
-        //getTempoButton.setVisibility(View.INVISIBLE);
 
-
+        // initialize modes
         MODE = STARTUP;
         MUSIC = false;
 
+        // Get and set parameters for music sources
+        Intent intent = getIntent();
+        boolean[] parameters = (boolean[]) intent.getExtras().get("parameters");
+
+        USER_TRACKS = parameters[0];
+        USER_PLAYLISTS = parameters[1];
+        CATEGORY_PLAYLISTS = parameters[2];
+        PREDEFINED = parameters[3];
+
+
+
+        // Create global configuration and initialize ImageLoader with this config
+        ImageLoaderConfiguration config = new ImageLoaderConfiguration.Builder(this)
+			.build();
+        ImageLoader.getInstance().init(config);
+        imageLoader = ImageLoader.getInstance();
+
+        setContentView(R.layout.main_ui);
+
+        // initialize views & drawables
         button_CENTER = findViewById(R.id.buttonCENTER);
         button_FIND = findViewById(R.id.buttonFIND);
         button_NEXT = findViewById(R.id.buttonNEXT);
@@ -179,9 +231,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         stopWatch = getResources().getDrawable(R.drawable.ic_stopwatch);
 
         paceView = findViewById(R.id.paceView);
-        pace = 0;
         bpmView = findViewById(R.id.bpmView);
-        bpm = 120;
 
         titleView = findViewById(R.id.titleText);
         nowPlaying = findViewById(R.id.nowPlaying);
@@ -189,24 +239,34 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         debugMode = findViewById(R.id.debugMODE);
         debugMusic = findViewById(R.id.debugMUSIC);
 
+        albumArt = findViewById(R.id.albumArt);
+
+        // initialize pace & bpm values
+        pace = 0;
+        bpm = 120;
+
+        PLAYLIST_SIZE = 20;
+
         if (!DEBUG) {
             debugMusic.setVisibility(View.INVISIBLE);
             debugMode.setVisibility(View.INVISIBLE);
         }
 
+        // update the views
         updateViews();
 
-         spotifyPlaylists = new ArrayList<String>();
-            spotifyPlaylists.add("1k704ydfoeesod05jv58rh3oe:0ze1Ymim1dpGKRlx9H8vC8");
-            spotifyPlaylists.add("dmxuazvp7p5fwjq7882m7uwd8:0mmqC3RIi8h7nApdD9gV7x");
-            spotifyPlaylists.add("1166998660:355AmRU0BBJtzr9hwupxcP");
-            spotifyPlaylists.add("nikewomen:13thjkLTYZmZvjdz4u6kxh");
-            spotifyPlaylists.add("spotify:37i9dQZF1DWZ2xRu8ajLOe");
-            spotifyPlaylists.add("sonymusicfinland:7gO9WmJaPmIviOlvK1m95P");
+        // initialize array of default playlist IDs
+        predefinedSpotifyPlaylists = new ArrayList<String>();
+            predefinedSpotifyPlaylists.add("1k704ydfoeesod05jv58rh3oe:0ze1Ymim1dpGKRlx9H8vC8");
+            predefinedSpotifyPlaylists.add("dmxuazvp7p5fwjq7882m7uwd8:0mmqC3RIi8h7nApdD9gV7x");
+            predefinedSpotifyPlaylists.add("1166998660:355AmRU0BBJtzr9hwupxcP");
+            predefinedSpotifyPlaylists.add("nikewomen:13thjkLTYZmZvjdz4u6kxh");
+            predefinedSpotifyPlaylists.add("spotify:37i9dQZF1DWZ2xRu8ajLOe");
+            predefinedSpotifyPlaylists.add("sonymusicfinland:7gO9WmJaPmIviOlvK1m95P");
 
 
 
-        // initialize booleans
+        // initialize booleans for finding pace
         timing = false;
         activityCounting = false;
 
@@ -218,15 +278,20 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         // set up appremote
         getRemote();
-
-
     }
 
 
     @Override
     protected  void onResume() {
         super.onResume();
-        activityRunning = true; //DO WE NEED THIS??
+
+        System.out.println("WE HAVE RESUMED!");
+
+        if (appRemote !=null && !appRemote.isConnected()){
+            System.out.println("OK WE'RE GETTING THE APP REMOTE AGAIN...");
+            getRemote();
+        }
+
 
         // create a sensor and initialize registerListener
         Sensor countSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
@@ -240,11 +305,10 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     @Override
     protected void onPause(){
         super.onPause();
-        activityRunning = false;
-
     }
 
-    // Runs whenever there is a new sensor event (I think!)
+    // Runs whenever there is a new sensor event
+    // Collects the pace of the user
     @Override
     public void onSensorChanged(SensorEvent event) {
 
@@ -253,17 +317,12 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             currTime = System.currentTimeMillis();
             currSteps = event.values[0];
 
-            //String messageExtra = "\n";
-            //messageExtra += "Current time: " + currTime + "ms";
-
             if (!timing) { // if we aren't timing, set the initial time and step values...
                 timing = true;
                 prevTime = currTime;
                 prevSteps = currSteps;
-                //messageExtra += "\n" + "timing: " + timing;
 
             } else { //when we are currently timing...
-                //messageExtra += "\n" + "difference = " + (currTime - prevTime);
 
                 paceView.setText((((currSteps - prevSteps) / (currTime - prevTime)) * 60000)
                         + " steps/min");
@@ -275,12 +334,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                     tempo = stepsPerMinute;
                     // go ahead and make queue based on tempo.
                     makeQueue(stepsPerMinute);
-                    //stepView.setText("Steps per Minute = " + stepsPerMinute);
                 }
-            }
-
-            if (activityRunning) {
-                //count.setText("Steps: " + String.valueOf(currSteps) + "\n" + messageExtra + " activityCounting: " + activityCounting);
             }
         }
     }
@@ -292,30 +346,209 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     // Set Tempo Button has been pressed, go ahead and collect the user's tempo
     public void getSteps(View view) {
-        Toast.makeText(this,"Set Tempo!", Toast.LENGTH_LONG).show();
+        Toast.makeText(this,"Recording Pace...", Toast.LENGTH_LONG).show();
         activityCounting = true;
         timing = false;
     }
 
+    // Makes necessary calls to collect Track information from various sources...
+    private void getMasterSongCollection(){
+        //featuresTracks = new ArrayList<AudioFeaturesTrack>();
+        //beatMap = new HashMap<String, Float>();
+
+        ////NOTE////
+        // Perhaps there should be separate List<AudioFeaturesTracks> for User's Tracks, User's Playlists, and the Predefined Playlists
+        // All of them will be loaded at the outset, BUT...
+        // Then only those catagories which the user has opted for will be considered (iterated through) during makeQueue()
+        ////NOTE////
+
+        GOT_USER_TRACKS = true;
+        GOT_USER_PLAYLISTS = true;
+        GOT_PREDEFINED = true;
+        GOT_CATEGORY = true;
 
 
+        if (USER_TRACKS){
+            GOT_USER_TRACKS = false;
+            userSavedBeatMap = new HashMap<String, Float>();
+            getUserTracks();
+        }
 
-    // Process all the data from the playlist pool
-    private void getPlaylists(){
+        if (USER_PLAYLISTS){
+            GOT_USER_PLAYLISTS = false;
+            userPlaylistBeatMap = new HashMap<String, Float>();
+            getUserPlaylists();
 
-        playlists = new ArrayList<Playlist>();
-        featuresTracks = new ArrayList<AudioFeaturesTrack>();
-        spotifySongs = new ArrayList<String>();
+        }
+
+        if (PREDEFINED){
+            GOT_PREDEFINED = false;
+            predefinedBeatMap = new HashMap<String, Float>();
+            predefinedFeaturesTracks = new ArrayList<AudioFeaturesTrack>();
+            getPlaylists(predefinedSpotifyPlaylists, TYPE_PREDEFINED, predefinedBeatMap);
+        }
+
+        if (CATEGORY_PLAYLISTS){
+            categoryBeatMap = new HashMap<String, Float>();
+            GOT_CATEGORY = false;
+            getCategoryPlaylists("workout");
+        }
+
+
+    }
+
+    // Check if all relevant Track data has been acquired
+    // then set mode to FIND_FACE and update views...
+    private void checkGetMasterDone(){
+
+        if (GOT_PREDEFINED && GOT_USER_PLAYLISTS && GOT_USER_TRACKS && GOT_CATEGORY) {
+            MODE = FIND_PACE;
+            button_CENTER.setVisibility(View.VISIBLE);
+            updateViews();
+        }
+    }
+
+    private void getUserPlaylists(){
+        getUserPlaylists(new ArrayList<String>(), 0);
+    }
+
+    private void getUserPlaylists(final List<String> spotifyPlaylists, final int offset){
+        userPlaylistFeaturesTracks = new ArrayList<AudioFeaturesTrack>();
+        Map options = new HashMap<String, Object>();
+        options.put("limit", 50);
+        options.put("offset", offset);
+        spotify.getPlaylists(USER_NAME, options, new SpotifyCallback<Pager<PlaylistSimple>>() {
+            @Override
+            public void failure(SpotifyError spotifyError) {
+
+            }
+
+            @Override
+            public void success(Pager<PlaylistSimple> playlistSimplePager, Response response) {
+                for (PlaylistSimple playlist : playlistSimplePager.items){
+                    spotifyPlaylists.add(playlist.owner+ ":" + playlist.id);
+                }
+                if (playlistSimplePager.total > 50 && playlistSimplePager.items.size() == 50){
+                    getUserPlaylists(spotifyPlaylists, offset + 50);
+                } else {
+                    // we must have got through all of them so
+                    System.out.println("ok, go get user's playlists...");
+                    getPlaylists(spotifyPlaylists, TYPE_USER, userPlaylistBeatMap);
+                }
+            }
+        });
+    }
+
+    private void getCategoryPlaylists(String category){
+        categorySongIDs = new ArrayList<String>();
+        categoryFeaturesTracks = new ArrayList<AudioFeaturesTrack>();
+        List<String> spotifyPlaylists = new ArrayList<String>();
+        getCategoryPlaylists(category, 0, spotifyPlaylists);
+    }
+
+    private void getCategoryPlaylists(final String category, final int offset, final List<String> spotifyPlaylists){
+        //String category = "workout";
+        //int offset = 0;
+
+        Map options = new HashMap<String, Object>();
+        options.put("country", "US");
+        options.put("limit", 50);
+        options.put("offset", offset);
+
+
+        spotify.getPlaylistsForCategory(category, options, new SpotifyCallback<PlaylistsPager>() {
+            @Override
+            public void failure(SpotifyError spotifyError) {
+
+            }
+
+            @Override
+            public void success(PlaylistsPager playlistsPager, Response response) {
+                for (PlaylistSimple playlist : playlistsPager.playlists.items){
+                    spotifyPlaylists.add(playlist.owner + ":" + playlist.id);
+                }
+                if (playlistsPager.playlists.total > 50 && playlistsPager.playlists.items.size() == 50){
+                    getCategoryPlaylists(category, offset + 50, spotifyPlaylists);
+                } else {
+                    // we must have got through all of them so
+                    System.out.println("ok, go get category playlists...");
+                    getPlaylists(spotifyPlaylists, TYPE_CATEGORY, categoryBeatMap);
+                }
+            }
+        });
+    }
+
+    // Gets Track data for the user's Saved Tracks
+    private void getUserTracks(){
+        userSongIDs = new ArrayList<String>();
+        userSavedFeaturesTracks = new ArrayList<AudioFeaturesTrack>();
+        spotify.getMySavedTracks(new SpotifyCallback<Pager<SavedTrack>>() {
+            @Override
+            public void failure(SpotifyError spotifyError) {
+                System.out.println("Could not get user tracks!");
+            }
+
+            @Override
+            public void success(Pager<SavedTrack> savedTrackPager, Response response) {
+                System.out.println("User Tracks size: " + savedTrackPager.items.size());
+                for (SavedTrack track : savedTrackPager.items){
+                    userSongIDs.add(track.track.id);
+                }
+                System.out.println("SongIDS size: " + userSongIDs.size());
+                String result = "";
+                for (int i = 0; i < userSongIDs.size(); i++){
+                    result += userSongIDs.get(i) + ",";
+                    System.out.println("i = " + i);
+                    if (i % 99 == 0 || i == userSongIDs.size()-1){
+                        System.out.println(result);
+                        spotify.getTracksAudioFeatures(result, new SpotifyCallback<AudioFeaturesTracks>() {
+                            @Override
+                            public void failure(SpotifyError spotifyError) {
+                                System.out.println("Could not get user tracks!");
+                            }
+
+                            @Override
+                            public void success(AudioFeaturesTracks audioFeaturesTracks, Response response) {
+                                // For each AudioFeaturesTrack, add it to the list....
+                                for (AudioFeaturesTrack track : audioFeaturesTracks.audio_features) {
+
+                                    //userSavedFeaturesTracks.add(track);
+                                    userSavedBeatMap.put(track.uri, track.tempo);
+                                    //beatMap.put(track.uri, track.tempo);
+                                    // When we've reached the last Track, call checkGetMasterDone()...
+                                    if (track.id.equals(userSongIDs.get(userSongIDs.size()-1))){
+                                        System.out.println("Got User Tracks!");
+                                        GOT_USER_TRACKS = true;
+                                        checkGetMasterDone();
+                                    }
+                                }
+                            }
+                        });
+                        result = "";
+                    }
+                }
+
+            }
+        });
+    }
+
+    // Gets Track data from the predefined collection of work-out playlists
+    private void getPlaylists(final List<String> spotifyPlaylists, final int PLAYLIST_TYPE, final Map<String, Float> currentBeatMap){//final List<AudioFeaturesTrack> featuresList){
+
+        final List<Playlist> playlists = new ArrayList<Playlist>();
+        //featuresTracks = new ArrayList<AudioFeaturesTrack>();
+        //beatMap = new HashMap<String, Float>();
+        final List<String> spotifySongs = new ArrayList<String>();
+
+
 
         // get all the playlists...
         for (int j = 0; j < spotifyPlaylists.size(); j++) {
             String[] user_list = spotifyPlaylists.get(j).split(":");
 
-
             spotify.getPlaylist(user_list[0], user_list[1], new SpotifyCallback<Playlist>() {
                 @Override
                 public void failure(SpotifyError spotifyError) {
-
                 }
 
                 @Override
@@ -329,10 +562,10 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                     // if we've processed the last song in the last playlist...
                     String last = spotifyPlaylists.get(spotifyPlaylists.size()-1).split(":")[1];
                     if (playlist.id.equals(last)){
-                        //String result = spotifySongs.get(0);
                         String result = "";
                         for (int j = 0; j < spotifySongs.size(); j++){
-                            result += spotifySongs.get(j)+",";
+                            String songToAdd = spotifySongs.get(j);
+                            if (songToAdd != null) result += songToAdd+",";
 
                             if (j % 99 == 0 || j == spotifySongs.size()-1){
                                 spotify.getTracksAudioFeatures(result, new SpotifyCallback<AudioFeaturesTracks>() {
@@ -343,52 +576,84 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
                                     @Override
                                     public void success(AudioFeaturesTracks audioFeaturesTracks, Response response) {
+                                        System.out.println(PLAYLIST_TYPE);
                                         for (AudioFeaturesTrack track : audioFeaturesTracks.audio_features){
-                                            featuresTracks.add(track);
-                                            if (track.id.equals(spotifySongs.get(spotifySongs.size()-1))){
-                                                //getTempoButton.setVisibility(View.VISIBLE); ////////////////////////////////CHECK THIS!!!!!!!!!
-                                                MODE = FIND_PACE;
-                                                button_CENTER.setVisibility(View.VISIBLE);
-                                                updateViews();
+                                            if (track != null) {
+                                                //featuresList.add(track);
+                                                currentBeatMap.put(track.uri, track.tempo);
+                                                //beatMap.put(track.uri, track.tempo);
+                                                // if we've processed the last AudioFeaturesTrack...
+                                                if (track.id.equals(spotifySongs.get(spotifySongs.size() - 1))) {
+                                                    if (PLAYLIST_TYPE == TYPE_PREDEFINED) {
+                                                        System.out.println("Got Predefined!");
+                                                        GOT_PREDEFINED = true;
+                                                    }
+                                                    if (PLAYLIST_TYPE == TYPE_CATEGORY) {
+                                                        System.out.println("Got Category!");
+                                                        GOT_CATEGORY = true;
+                                                    }
+                                                    if (PLAYLIST_TYPE == TYPE_USER) {
+                                                        System.out.println("Got Users Playlists!");
+                                                        GOT_USER_PLAYLISTS = true;
+                                                    }
+
+                                                    checkGetMasterDone();
+                                                    //MODE = FIND_PACE;
+                                                    //button_CENTER.setVisibility(View.VISIBLE);
+                                                    //updateViews();
+                                                }
                                             }
                                         }
-
-                                        //getTempoButton.setVisibility(View.VISIBLE);
                                     }
                                 });
                                 result = "";
                             }
-
                         }
-
-
-
                     }
                 }
             });
         }
     }
 
-
-
     // add all the songs to the queue that meet BPM requirements
     private void makeQueue(float tempo){
-        songQueue = new LinkedList<AudioFeaturesTrack>();
 
-        for (int i = 0; i < featuresTracks.size(); i++){
-            float trackTempo = featuresTracks.get(i).tempo;
+        Map<String, Float> combinedBeatMap = new HashMap<String, Float>();
+
+        System.out.println("Map Size: " + combinedBeatMap.size());
+        if (USER_TRACKS) combinedBeatMap.putAll(userSavedBeatMap);
+        System.out.println("Map Size: " + combinedBeatMap.size());
+        if (CATEGORY_PLAYLISTS) combinedBeatMap.putAll(categoryBeatMap);
+        System.out.println("Map Size: " + combinedBeatMap.size());
+        if (PREDEFINED) combinedBeatMap.putAll(predefinedBeatMap);
+        System.out.println("Map Size: " + combinedBeatMap.size());
+        if (USER_PLAYLISTS) combinedBeatMap.putAll(userPlaylistBeatMap);
+        System.out.println("Map Size: " + combinedBeatMap.size());
+
+        beatMap = combinedBeatMap;
+
+        List<String> songQueue = new ArrayList<String>();
+
+        for (String URI : combinedBeatMap.keySet()){
+            float trackTempo = combinedBeatMap.get(URI);
             if (trackTempo >= tempo-MARGIN && trackTempo <= tempo+MARGIN){
-                songQueue.add(featuresTracks.get(i));
+                songQueue.add(URI);
             }
         }
 
         pace = tempo;
-        makePlaylist(songQueue, tempo);
-
+        if (!songQueue.isEmpty()){
+            makePlaylist(songQueue, tempo);
+        } else {
+            MODE = 4;
+            updateViews();
+            Toast.makeText(this, "Sorry, No Songs Match That Tempo!", Toast.LENGTH_LONG).show();
+        }
 
     }
 
-   private void makePlaylist(final List<AudioFeaturesTrack> songs, float tempo){
+   // Create a new playlist on the user's account before adding tracks to it...
+    private void makePlaylist(final List<String> songs, float tempo){
 
         String playlistName = "Tempo: " + tempo;
 
@@ -411,15 +676,16 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
    }
 
-   private void addSongsToPlaylist(List<AudioFeaturesTrack> songs, final Playlist playlist){
+   // Adds songs to a Spotify Playlist based on a List of AudioFeaturesTracks
+   private void addSongsToPlaylist(List<String> songs, final Playlist playlist){
        Collections.shuffle(songs);
        String uris = "";
 
-       int max = 20;
+       int max = PLAYLIST_SIZE;
        if (songs.size() < max) max = songs.size();
 
        for (int i = 0; i < max; i++){
-           uris += songs.get(i).uri + ",";
+           uris += songs.get(i) + ",";
        }
 
        Map<String, Object> map1 = new HashMap<String, Object>();
@@ -432,29 +698,19 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
        spotify.addTracksToPlaylist(USER_NAME, playlist.id, map1, map2, new SpotifyCallback<Pager<PlaylistTrack>>() {
            @Override
            public void failure(SpotifyError spotifyError) {
-                MODE = 4;
+                MODE = FIND_PACE;
                 updateViews();
            }
 
            @Override
-           public void success(Pager<PlaylistTrack> playlistTrackPager, Response response) {
-
-
-            appRemote.getPlayerApi().play(playlist.uri);
-               MODE = PLAYING;
-               MUSIC = true;
-               updateViews();
+            public void success(Pager<PlaylistTrack> playlistTrackPager, Response response) {
+                appRemote.getPlayerApi().play(playlist.uri);
+                MODE = PLAYING;
+                MUSIC = true;
+                updateViews();
            }
        });
    }
-
-
-
-
-
-
-
-
 
 
 
@@ -462,6 +718,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     //SET UP SPOTIFY AUTHORIZATION//
     ////////////////////////////////
 
+    // Fetches the authorization token for Spotify.
+    // Ultimately calls getPlaylists() to get the pre-defined playlists THIS SHOULD BE AMENDED TO ACCOUNT FOR SONGS IN THE USER'S LIBRARY
     public void getToken(){
         final AuthenticationRequest request = getAuthenticationRequest(AuthenticationResponse.Type.TOKEN);
         AuthenticationClient.openLoginActivity(this, AUTH_TOKEN_REQUEST_CODE, request);
@@ -485,7 +743,6 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         if (AUTH_TOKEN_REQUEST_CODE == requestCode) {
             mAccessToken = response.getAccessToken();
-            //count.setText(mAccessToken);
 
             // Set up and initialize our Spotify Service field, 'spotify'
             SpotifyApi api = new SpotifyApi();
@@ -502,14 +759,15 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 @Override
                 public void success(UserPrivate userPrivate, Response response) {
                     USER_NAME = userPrivate.id;
-                    getPlaylists();
+                    //getPlaylists();
+                    getMasterSongCollection();
                 }
             });
         }
     }
 
 
-
+    // Sets up the App-Remote & Subscribe to PlayerState
     private void getRemote(){
 
         ConnectionParams connectionParams = new ConnectionParams.Builder(CLIENT_ID)
@@ -525,12 +783,24 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 appRemote.getPlayerApi().subscribeToPlayerState().setEventCallback(new Subscription.EventCallback<PlayerState>() {
                     @Override
                     public void onEvent(PlayerState playerState) {
-                        if (MODE != TIMING && playerState.isPaused) MODE = PAUSED;
-                            else if (MODE != TIMING) MODE = PLAYING;
+                        if (MODE != TIMING && MODE != STARTUP && playerState.isPaused) MODE = PAUSED;
+                            else if (MODE != TIMING && MODE != STARTUP) MODE = PLAYING;
                         updateViews();
 
-                        nowPlaying.setText("PLAYING: \n" + playerState.track.name + " by " + playerState.track.artist.name);
+                        nowPlaying.setText(playerState.track.name + " by " + playerState.track.artist.name + " - BPM:" + beatMap.get(playerState.track.uri));
                         System.out.println(playerState.track.name + " by " + playerState.track.artist.name);
+
+                        spotify.getTrack(playerState.track.uri.split(":")[2], new SpotifyCallback<Track>() {
+                            @Override
+                            public void failure(SpotifyError spotifyError) {
+
+                            }
+
+                            @Override
+                            public void success(Track track, Response response) {
+                                imageLoader.displayImage(track.album.images.get(0).url, albumArt);
+                            }
+                        });
                     }
                 });
             }
@@ -541,10 +811,19 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
             }
         });
+
+
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        //SpotifyAppRemote.disconnect(appRemote);
     }
 
     /////////////////////////////////////////
 
+    // Update all the UI views...
     private void updateViews(){
 
         debugMusic.setText("Music = " + MUSIC);
@@ -555,6 +834,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         if (MODE == STARTUP){
             titleView.setText("TEMPO MATCH");
+            albumArt.setVisibility(View.INVISIBLE);
             button_PREV.setVisibility(View.INVISIBLE);
             button_NEXT.setVisibility(View.INVISIBLE);
 
@@ -569,6 +849,10 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         } else if (MODE == TIMING){
 
             bpmView.setText("START MOVING!!");
+
+            nowPlaying.setVisibility(View.INVISIBLE);
+            albumArt.setVisibility(View.INVISIBLE);
+
             button_PREV.setVisibility(View.INVISIBLE);
             button_NEXT.setVisibility(View.INVISIBLE);
 
@@ -584,6 +868,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         } else if (MUSIC){
 
             nowPlaying.setVisibility(View.VISIBLE);
+            albumArt.setVisibility(View.VISIBLE);
 
             if (MODE == PLAYING){
                 button_PREV.setVisibility(View.VISIBLE);
@@ -658,6 +943,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         } else {
 
             nowPlaying.setVisibility(View.INVISIBLE);
+            albumArt.setVisibility(View.INVISIBLE);
 
             if (MODE == SET_PACE){
                 button_PREV.setVisibility(View.VISIBLE);
@@ -696,7 +982,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     }
 
-
+    // Handle Center Button clicks...
     public void onCenterClicked(View view) {
         if (MODE == PLAYING){
             appRemote.getPlayerApi().pause();
@@ -718,6 +1004,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         }
     }
 
+    // Handle Set Pace Button clicks
     public void onSetClicked(View view) {
 
         if (MODE == SET_PACE){ //if mode already is SET (play button is in lower right)
@@ -729,6 +1016,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         updateViews();
     }
 
+    // Handle Find Pace Button clicks
     public void onFindClicked(View view) {
 
         if (MODE == FIND_PACE){
@@ -740,24 +1028,29 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         updateViews();
     }
 
+    // Handle Next Button clicks...
     public void onNextClicked(View view) {
         if (MODE == SET_PACE){
             bpm++;
             bpmView.setText((bpm) + " bpm");
-        } else if (MODE == PLAYING) {
+        } else if (MODE == PLAYING || MODE == PAUSED) {
             appRemote.getPlayerApi().skipNext();
+            if (MODE == PAUSED) appRemote.getPlayerApi().pause();
         }
     }
 
+    // Handle Previous Button clicks...
     public void onPrevClicked(View view) {
         if (MODE == SET_PACE){
             bpm--;
             bpmView.setText((bpm) + " bpm");
-        } else if (MODE == PLAYING){
+        } else if (MODE == PLAYING || MODE == PAUSED){
             appRemote.getPlayerApi().skipPrevious();
+            if (MODE == PAUSED) appRemote.getPlayerApi().pause();
         }
     }
 
+    // Sets mode to either PAUSED or PLAYING depending on the Spotify PlayerSatate
     private void setPlayMode(){
         appRemote.getPlayerApi().getPlayerState().setResultCallback(new CallResult.ResultCallback<PlayerState>() {
             @Override

@@ -35,5 +35,7 @@ dependencies {
     // Kaaes wrapper
     implementation 'com.github.kaaes:spotify-web-api-android:0.4.1'
 
-    //
+    //Universal Image Loader
+    implementation 'com.nostra13.universalimageloader:universal-image-loader:1.9.5'
+
 }
