@@ -1,3 +1,3 @@
 # TempoMatch
 
-![alt text](/images/tempomatch1.JPG)
+![alt text](/images/screenshots.png)
