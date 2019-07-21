@@ -24,7 +24,10 @@ RESOURCES:
 
 Libraries:
 https://github.com/spotify/android-sdk/releases
+
 https://github.com/kaaes/spotify-web-api-android
+
 https://github.com/nostra13/Android-Universal-Image-Loader
+
 
 Artwork: https://www.flaticon.com/authors/smashicons
