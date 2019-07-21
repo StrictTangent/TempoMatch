@@ -19,3 +19,12 @@ Click on Gradle (top right) > app > Tasks > android > signingReport
 In MainActivity.java you must change the field:
 
 public static final String CLIENT_ID = "56876e9226e34cb6a4461d3877309b75"; to be the client ID in your own Spotify Developer Dashboard.
+
+RESOURCES:
+
+Libraries:
+https://github.com/spotify/android-sdk/releases
+https://github.com/kaaes/spotify-web-api-android
+https://github.com/nostra13/Android-Universal-Image-Loader
+
+Artwork: https://www.flaticon.com/authors/smashicons
